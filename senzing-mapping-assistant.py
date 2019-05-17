@@ -13,7 +13,7 @@ import sys
 import time
 import pickle
 
-from sklearn.datasets import fetch_20newsgroups, load_files
+from sklearn.datasets import load_files
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.feature_extraction.text import TfidfTransformer
@@ -94,6 +94,10 @@ def get_parser():
     subparser_4.add_argument("--input-file", dest="input_file", metavar="SENZING_INPUT_FILE", help="File to analyze. No default.")
     subparser_4.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Filename of the trained model. Default: model.pickle")
     subparser_4.add_argument("--pretty", dest="pretty", action="store_true", help="Pretty print output. Default: False (SENZING_PRETTY)")
+
+    subparser_5 = subparsers.add_parser('suggest-as-markdown', help='Suggest a category.')
+    subparser_5.add_argument("--input-file", dest="input_file", metavar="SENZING_INPUT_FILE", help="File to analyze. No default.")
+    subparser_5.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Filename of the trained model. Default: model.pickle")
 
     return parser
 
@@ -572,6 +576,70 @@ def do_suggest(args):
     # Epilog.
 
     logging.info(exit_template(config))
+
+
+def do_suggest_as_markdown(args):
+    '''Read from URL-addressable file.'''
+
+    # Get context from CLI, environment variables, and ini files.
+
+    config = get_configuration(args)
+
+    # Perform common initialization tasks.
+
+    validate_configuration(config)
+
+    # Get values from configuration.
+
+    input_file = config.get('input_file')
+    model_file = config.get('model_file')
+    pretty = config.get('pretty')
+
+    # Load files.
+
+    training_set = pickle.load(open(model_file, "rb"))
+
+    count_vect = CountVectorizer()
+    training_counts = count_vect.fit_transform(training_set.data)
+    tfidf_transformer = TfidfTransformer()
+    training_tfidf = tfidf_transformer.fit_transform(training_counts)
+
+    # XXX
+
+    clf = MultinomialNB().fit(training_tfidf, training_set.target)
+
+    # Example samples.
+
+    samples = open(input_file).read().splitlines()
+
+    # Calculate predictions of samples.
+
+    sample_counts = count_vect.transform(samples)
+    sample_tfidf = tfidf_transformer.transform(sample_counts)
+    predictions = clf.predict(sample_tfidf)
+
+    # Print samples and predictions.
+
+#     for sample, prediction in zip(samples, predictions):
+#         logging.info(message_info(103, sample, training_set.target_names[prediction]))
+
+    min_size = min(len(samples), len(predictions))
+    prediction_counters = {}
+    for sample, prediction in zip(samples, predictions):
+        if prediction not in prediction_counters.keys():
+            prediction_counters[prediction] = 0
+        prediction_counters[prediction] += 1
+
+    prediction_percentages = {}
+    for prediction, prediction_count in prediction_counters.items():
+        prediction_percentages[training_set.target_names[prediction]] = prediction_count / min_size
+
+    print("\n\n### {0}".format(input_file))
+    print("\n```console")
+    for key, value in sorted(prediction_percentages.items(), reverse=True, key=lambda item: item[1]):
+        percent = value * 100
+        pretty_print(percent, key)
+    print("```")
 
 # -----------------------------------------------------------------------------
 # Main
