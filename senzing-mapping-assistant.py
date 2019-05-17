@@ -35,6 +35,11 @@ configuration_locator = {
         "env": "SENZING_INPUT_DIRECTORY",
         "cli": "input-directory"
     },
+    "input_file": {
+        "default": None,
+        "env": "SENZING_INPUT_FILE",
+        "cli": "input-file"
+    },
     "jsonlines_file": {
         "default": None,
         "env": "SENZING_JSONLINES_FILE",
@@ -49,6 +54,11 @@ configuration_locator = {
         "default": "senzing-mapping-assistant-prepare",
         "env": "SENZING_OUTPUT_DIRECTORY",
         "cli": "output-directory"
+    },
+    "pretty": {
+        "default": False,
+        "env": "SENZING_PRETTY",
+        "cli": "pretty"
     },
     "test_phrase": {
         "default": None,
@@ -74,11 +84,16 @@ def get_parser():
 
     subparser_2 = subparsers.add_parser('train', help='Create a model from training.')
     subparser_2.add_argument("--input-directory", dest="input_directory", metavar="SENZING_INPUT_DIRECTORY", help="Output directory from prepare step. Default: senzing-mapping-assistant-prepare")
-    subparser_2.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Output filename of model created by training.")
+    subparser_2.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Output filename of model created by training. Default: model.pickle")
 
     subparser_3 = subparsers.add_parser('test-phrase', help='Test a phrase.')
     subparser_3.add_argument("--test-phrase", dest="test_phrase", metavar="SENZING_TEST_PHRASE", help="Phrase to test. No default.")
-    subparser_3.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Output filename of model created by training.")
+    subparser_3.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Output filename of model created by training. Default: model.pickle")
+
+    subparser_4 = subparsers.add_parser('suggest', help='Suggest a category.')
+    subparser_4.add_argument("--input-file", dest="input_file", metavar="SENZING_INPUT_FILE", help="File to analyze. No default.")
+    subparser_4.add_argument("--model-file", dest="model_file", metavar="SENZING_MODEL_FILE", help="Filename of the trained model. Default: model.pickle")
+    subparser_4.add_argument("--pretty", dest="pretty", action="store_true", help="Pretty print output. Default: False (SENZING_PRETTY)")
 
     return parser
 
@@ -98,6 +113,7 @@ message_dictionary = {
     "101": "Enter {0}",
     "102": "Exit {0}",
     "103": "Phrase: '{0}' Category: '{1}'",
+    "104": "Percent: {0:.2f}% Category: '{1}'",
     "199": "{0}",
     "200": "senzing-" + SENZING_PRODUCT_ID + "{0:04d}W",
     "400": "senzing-" + SENZING_PRODUCT_ID + "{0:04d}E",
@@ -242,7 +258,7 @@ def get_configuration(args):
 
     # Special case: Change boolean strings to booleans.
 
-    booleans = ['debug']
+    booleans = ['debug', 'pretty']
     for boolean in booleans:
         boolean_value = result.get(boolean)
         if isinstance(boolean_value, str):
@@ -353,6 +369,14 @@ def get_generator_from_jsonlines(jsonlines_filename, max_lines=0):
 
     return result_function
 
+
+def pretty_print(percent, suggestion):
+    if percent > 1.0:
+        if percent > 10:
+            print("{0:.1f}% - {1}".format(percent, suggestion))
+        else:
+            print(" {0:.1f}% - {1}".format(percent, suggestion))
+
 # -----------------------------------------------------------------------------
 # do_* functions
 #   Common function signature: do_XXX(args)
@@ -377,7 +401,7 @@ def do_prepare(args):
 
     # Create generators.
 
-    dictionaries = get_generator_from_jsonlines(jsonlines_file, 10000)
+    dictionaries = get_generator_from_jsonlines(jsonlines_file, 500000)
 
     # Create in-memory structure.
 
@@ -475,6 +499,75 @@ def do_test_phrase(args):
 
     for sample, prediction in zip(samples, predictions):
         logging.info(message_info(103, sample, training_set.target_names[prediction]))
+
+    # Epilog.
+
+    logging.info(exit_template(config))
+
+
+def do_suggest(args):
+    '''Read from URL-addressable file.'''
+
+    # Get context from CLI, environment variables, and ini files.
+
+    config = get_configuration(args)
+
+    # Perform common initialization tasks.
+
+    common_prolog(config)
+
+    # Get values from configuration.
+
+    input_file = config.get('input_file')
+    model_file = config.get('model_file')
+    pretty = config.get('pretty')
+
+    # Load files.
+
+    training_set = pickle.load(open(model_file, "rb"))
+
+    count_vect = CountVectorizer()
+    training_counts = count_vect.fit_transform(training_set.data)
+    tfidf_transformer = TfidfTransformer()
+    training_tfidf = tfidf_transformer.fit_transform(training_counts)
+
+    # XXX
+
+    clf = MultinomialNB().fit(training_tfidf, training_set.target)
+
+    # Example samples.
+
+    samples = open(input_file).read().splitlines()
+
+    # Calculate predictions of samples.
+
+    sample_counts = count_vect.transform(samples)
+    sample_tfidf = tfidf_transformer.transform(sample_counts)
+    predictions = clf.predict(sample_tfidf)
+
+    # Print samples and predictions.
+
+#     for sample, prediction in zip(samples, predictions):
+#         logging.info(message_info(103, sample, training_set.target_names[prediction]))
+
+    min_size = min(len(samples), len(predictions))
+    prediction_counters = {}
+    for sample, prediction in zip(samples, predictions):
+        if prediction not in prediction_counters.keys():
+            prediction_counters[prediction] = 0
+        prediction_counters[prediction] += 1
+
+    prediction_percentages = {}
+    for prediction, prediction_count in prediction_counters.items():
+        prediction_percentages[training_set.target_names[prediction]] = prediction_count / min_size
+
+    for key, value in sorted(prediction_percentages.items(), reverse=True, key=lambda item: item[1]):
+        percent = value * 100
+        if pretty:
+            pretty_print(percent, key)
+
+        else:
+            logging.info(message_info(104, percent, key))
 
     # Epilog.
 
