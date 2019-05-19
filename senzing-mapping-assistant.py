@@ -9,6 +9,7 @@ import csv
 import json
 import logging
 import os
+import re
 import sys
 import time
 import pickle
@@ -381,6 +382,14 @@ def pretty_print(percent, suggestion):
         else:
             print(" {0:.1f}% - {1}".format(percent, suggestion))
 
+
+def form_based_prediction(format_based_predictors, sample):
+        for category_id, category_regex in format_based_predictors.items():
+            if bool(re.match(category_regex, sample)):
+                return category_id
+        return -1
+        
+        
 # -----------------------------------------------------------------------------
 # do_* functions
 #   Common function signature: do_XXX(args)
@@ -493,15 +502,15 @@ def do_test_phrase(args):
 
     samples = [test_phrase]
 
-    # Calculate predictions of samples.
+    # Calculate feature_based_predictions of samples.
 
     sample_counts = count_vect.transform(samples)
     sample_tfidf = tfidf_transformer.transform(sample_counts)
-    predictions = clf.predict(sample_tfidf)
+    feature_based_predictions = clf.predict(sample_tfidf)
 
-    # Print samples and predictions.
+    # Print samples and feature_based_predictions.
 
-    for sample, prediction in zip(samples, predictions):
+    for sample, prediction in zip(samples, feature_based_predictions):
         logging.info(message_info(103, sample, training_set.target_names[prediction]))
 
     # Epilog.
@@ -543,27 +552,68 @@ def do_suggest(args):
 
     samples = open(input_file).read().splitlines()
 
-    # Calculate predictions of samples.
+
+    # Calculate form_based_predictions of samples.
+    
+    category_to_id_dictionary = { training_set.target_names[i] : i for i in range(0, len(training_set.target_names) ) }
+    print(category_to_id_dictionary)
+    
+    unknown_category = -1
+    ssn_category = category_to_id_dictionary.get('ssn_number') 
+    ssn_regex = r'^\d{3}-\d{2}-\d{4}$'
+    credit_card_category = category_to_id_dictionary.get('cc_account_number')
+    credit_card_regex=r'^((4\d{3})|(5[1-5]\d{2})|(6011))-?\d{4}-?\d{4}-?\d{4}|3[4,7]\d{13}$'
+    
+    format_based_predictions = []
+    for sample in samples:
+        final_category = unknown_category
+        if bool(re.match(ssn_regex, sample)):
+            final_category = ssn_category 
+        elif bool(re.match(credit_card_regex, sample)):
+            final_category = credit_card_category
+        format_based_predictions.append(final_category)
+
+    print(format_based_predictions)
+    
+    format_based_predictors = {
+         category_to_id_dictionary.get('ssn_number'): r'^\d{3}-\d{2}-\d{4}$',
+         category_to_id_dictionary.get('cc_account_number'): r'^((4\d{3})|(5[1-5]\d{2})|(6011))-?\d{4}-?\d{4}-?\d{4}|3[4,7]\d{13}$'
+    }
+    
+    format_based_predictions = []
+    for sample in samples:
+        format_based_predictions.append(form_based_prediction(format_based_predictors, sample))
+    print(format_based_predictions)
+    
+#     for target_name in training_set.target_names:
+#         print(target_name)
+
+
+    # Calculate feature_based_predictions of samples.
 
     sample_counts = count_vect.transform(samples)
     sample_tfidf = tfidf_transformer.transform(sample_counts)
-    predictions = clf.predict(sample_tfidf)
+    feature_based_predictions = clf.predict(sample_tfidf)
 
-    # Print samples and predictions.
+    # Print samples and feature_based_predictions.
 
-#     for sample, prediction in zip(samples, predictions):
+#     for sample, prediction in zip(samples, feature_based_predictions):
 #         logging.info(message_info(103, sample, training_set.target_names[prediction]))
 
-    min_size = min(len(samples), len(predictions))
-    prediction_counters = {}
-    for sample, prediction in zip(samples, predictions):
-        if prediction not in prediction_counters.keys():
-            prediction_counters[prediction] = 0
+    min_size = min(len(samples), len(feature_based_predictions))
+    prediction_counters = { i : 0 for i in range(0, len(training_set.target_names) ) }
+
+    for format_based_prediction, feature_based_prediction in zip(format_based_predictions, feature_based_predictions):
+        if format_based_prediction > 0:
+            prediction = format_based_prediction
+        else:
+            prediction = feature_based_prediction      
         prediction_counters[prediction] += 1
 
     prediction_percentages = {}
     for prediction, prediction_count in prediction_counters.items():
-        prediction_percentages[training_set.target_names[prediction]] = prediction_count / min_size
+        if prediction_count > 0:
+            prediction_percentages[training_set.target_names[prediction]] = float(prediction_count) / min_size
 
     for key, value in sorted(prediction_percentages.items(), reverse=True, key=lambda item: item[1]):
         percent = value * 100
@@ -612,27 +662,33 @@ def do_suggest_as_markdown(args):
 
     samples = open(input_file).read().splitlines()
 
-    # Calculate predictions of samples.
+    # Calculate feature_based_predictions of samples.
 
     sample_counts = count_vect.transform(samples)
     sample_tfidf = tfidf_transformer.transform(sample_counts)
-    predictions = clf.predict(sample_tfidf)
+    feature_based_predictions = clf.predict(sample_tfidf)
+    
+    print(feature_based_predictions)
 
-    # Print samples and predictions.
+    # Print samples and feature_based_predictions.
 
-#     for sample, prediction in zip(samples, predictions):
+#     for sample, prediction in zip(samples, feature_based_predictions):
 #         logging.info(message_info(103, sample, training_set.target_names[prediction]))
 
-    min_size = min(len(samples), len(predictions))
+    min_size = min(len(samples), len(feature_based_predictions))
     prediction_counters = {}
-    for sample, prediction in zip(samples, predictions):
+    for sample, prediction in zip(samples, feature_based_predictions):
         if prediction not in prediction_counters.keys():
             prediction_counters[prediction] = 0
         prediction_counters[prediction] += 1
 
+    print(prediction_counters)
+
     prediction_percentages = {}
     for prediction, prediction_count in prediction_counters.items():
-        prediction_percentages[training_set.target_names[prediction]] = prediction_count / min_size
+        prediction_percentages[training_set.target_names[prediction]] = float(prediction_count) / min_size
+
+    print(prediction_percentages)
 
     print("\n\n### {0}".format(input_file))
     print("\n```console")
